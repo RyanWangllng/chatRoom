@@ -1,13 +1,22 @@
 // #include "head.h"
 #include "server.h"
 
+// 初始化，sock_arr[i] = false表示套接字描述符i未打开
+vector<bool> server::sock_arr(10000, false);
+
 // 构造函数
 server::server(int port, string ip) : server_port(port), server_ip(ip) {}
 
 // 析构函数
 server::~server() {
-    for (auto connection : sock_arr) {
-        close(connection);
+    // for (auto connection : sock_arr) {
+    //     close(connection);
+    // }
+    // 调整析构函数
+    for (int i = 0; i < sock_arr.size(); i++) {
+        if (sock_arr[i]) {
+            close(i);
+        }
     }
     close(server_sockfd);
 }
@@ -66,8 +75,20 @@ void server::RecvMsg(int connection) {
         int len = recv(connection, buffer, sizeof(buffer), 0);
         // 客户端发送exit或异常结束时，退出
         if (strcmp(buffer, "exit") == 0 || len <= 0) {
+            // 关闭套接字描述符
+            close(connection);
+            sock_arr[connection] = false;
             break;
         }
         cout << "收到套接字描述符为 " << connection << " 的客户端发来的信息： " << buffer << endl;
+        // 回复客户端
+        string ans = "copy！";
+        int ret = send(connection, ans.c_str(), ans.size(), 0);
+        // 服务器收到exit或异常关闭套接字描述符
+        if (ret <= 0) {
+            close(connection);
+            sock_arr[connection] = false;
+            break;
+        }
     }
 }
