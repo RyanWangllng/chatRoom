@@ -12,5 +12,8 @@
 #include <fcntl.h>
 #include <sys/shm.h>
 #include <iostream>
+#include <thread>
+#include <vector>
+using namespace std;
 
 #endif
