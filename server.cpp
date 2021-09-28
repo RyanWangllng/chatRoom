@@ -81,6 +81,12 @@ void server::RecvMsg(int connection) {
             break;
         }
         cout << "收到套接字描述符为 " << connection << " 的客户端发来的信息： " << buffer << endl;
+        
+        // 处理客户端请求
+        string str(buffer);
+        HandleRequest(connection, str);
+
+        /*
         // 回复客户端
         string ans = "copy！";
         int ret = send(connection, ans.c_str(), ans.size(), 0);
@@ -89,6 +95,42 @@ void server::RecvMsg(int connection) {
             close(connection);
             sock_arr[connection] = false;
             break;
+        }
+        */
+    }
+}
+
+void server::HandleRequest(int connection, string str) {
+    char buffer[1000];
+    string name, password;
+
+    // 连接MySQL数据库
+    MYSQL mysql_conn;
+    mysql_init(&mysql_conn);
+    // MYSQL *mysql_conn = mysql_init(NULL);
+    // 连接本地数据库，第二个参数使用"127.0.0.1"会连接失败，使用"localhost"连接成功
+    if (!mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS)) {
+        cout << "数据库连接失败！" << endl;
+    } else {
+        cout << "数据库连接成功！" << endl;
+    }
+
+    if (str.find("name:") != str.npos) {
+        int p_name = str.find("name:"), p_pass = str.find("password:");
+        name = str.substr(p_name + 5, p_pass - 5);
+        password = str.substr(p_pass + 9, str.size() - p_pass - 8);
+        string search = "INSERT INTO USER VALUES (\"";
+        search += name;
+        search += "\",\"";
+        search += password;
+        search += "\");";
+        cout << "SQL语句：" << search << endl;
+        // 执行SQL语句
+        int ret = mysql_query(&mysql_conn, search.c_str());
+        if (ret == 0) {
+            cout << "插入成功！" << endl;
+        } else {
+            cout << "插入失败！" << ret << endl;
         }
     }
 }
