@@ -104,33 +104,81 @@ void server::HandleRequest(int connection, string str) {
     char buffer[1000];
     string name, password;
 
+    bool if_login = false;  // 记录当前客户端对象是否登录成功
+    string login_name;      // 记录当前客户端对象的用户名
+
     // 连接MySQL数据库
     MYSQL mysql_conn;
     mysql_init(&mysql_conn);
     // MYSQL *mysql_conn = mysql_init(NULL);
     // 连接本地数据库，第二个参数使用"127.0.0.1"会连接失败，使用"localhost"连接成功
-    if (!mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS)) {
-        cout << "数据库连接失败！" << endl;
-    } else {
-        cout << "数据库连接成功！" << endl;
-    }
+    mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS);
+    // if (!mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS)) {
+    //     cout << "数据库连接失败！" << endl;
+    // } else {
+    //     cout << "数据库连接成功！" << endl;
+    // }
 
     if (str.find("name:") != str.npos) {
+        // 注册
         int p_name = str.find("name:"), p_pass = str.find("password:");
         name = str.substr(p_name + 5, p_pass - 5);
         password = str.substr(p_pass + 9, str.size() - p_pass - 8);
+
         string search = "INSERT INTO USER VALUES (\"";
         search += name;
         search += "\",\"";
         search += password;
         search += "\");";
         cout << "SQL语句：" << search << endl;
+        
         // 执行SQL语句
-        int ret = mysql_query(&mysql_conn, search.c_str());
-        if (ret == 0) {
-            cout << "插入成功！" << endl;
+        mysql_query(&mysql_conn, search.c_str());
+        // int ret = mysql_query(&mysql_conn, search.c_str());
+        // if (ret == 0) {
+        //     cout << "插入成功！" << endl;
+        // } else {
+        //     cout << "插入失败！" << ret << endl;
+        // }
+    } else if (str.find("login") != str.npos) {
+        int p_login = str.find("login"), p_pass = str.find("pass:");
+        name = str.substr(p_login + 5, p_pass - 5);
+        password = str.substr(p_pass + 5, str.size() - p_pass - 4);
+        
+        string search = "SELECT * FROM USER WHERE NAME=\"";
+        search += name;
+        search += "\";";
+        cout << "SQL语句：" << search << endl;
+
+        auto search_ret = mysql_query(&mysql_conn, search.c_str());     // 返回0则执行成功
+        // 读取查询到的全部结果，存放在MYSQL_RES结构中；读取结果失败或者查询未返回结果集，将返回NULL指针
+        auto result = mysql_store_result(&mysql_conn);
+        int col = mysql_num_fields(result);     // 获得查询结果集中的列数
+        int row = mysql_num_rows(result);       // 获得查询结果集中的行数
+
+        if (search_ret == 0 && row != 0) {
+            cout << "查询成功！" << endl;
+            auto info = mysql_fetch_row(result);    // 搜索结果集的下一行，返回MYSQL_ROW结构
+            cout << "查询到用户名：" << info[0] << " 密码：" << info[1] << endl;
+
+            if (info[1] == password) {
+                cout << "登录密码正确！" << endl;
+                string str_ret = "ok";
+                if_login = true;
+                login_name = name;
+                send(connection, str_ret.c_str(), str_ret.size(), 0);
+            } else {
+                cout << "登录密码错误！" << endl;
+                char str_ret[100] = "wrong";
+                send(connection, str_ret, strlen(str_ret), 0);
+            }
         } else {
-            cout << "插入失败！" << ret << endl;
+            cout << "查询失败！" << endl;
+            char str_ret[100] = "wrong";
+            send(connection, str_ret, strlen(str_ret), 0);
         }
+
+        // 释放mysql_store_result()为结果集分配的内存
+        mysql_free_result(result);
     }
 }
