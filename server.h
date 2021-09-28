@@ -15,6 +15,7 @@ class server {
         ~server();                              // 析构函数
         void run();                             // 服务器开始运行
         static void RecvMsg(int connection);    // 子线程工作的静态函数
+        static void HandleRequest(int connection, string str);
 };
 
 #endif
