@@ -15,6 +15,7 @@ class client {
         void run();                             // 启动客户端
         static void SendMsg(int connection);    // 发送线程        
         static void RecvMsg(int connection);    // 接收线程
+        void HandleClient(int connection);      // 在与服务器连接建立之后开始工作，与用户进行交互并处理各项事务
 };
 
 #endif
