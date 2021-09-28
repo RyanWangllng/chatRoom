@@ -22,12 +22,16 @@ void client::run() {
     }
     cout << "连接服务器成功！" << endl;
 
+    HandleClient(sock_connection);
+
+    /*
     // 创建发送线程和接收线程
     thread send_t(client::SendMsg, sock_connection), recv_t(client::RecvMsg, sock_connection);
     send_t.join();
     cout << "发送线程已关闭！" << endl;
     recv_t.join();
     cout << "接收线程已关闭！" << endl;
+    */
     return;
 }
 
@@ -51,5 +55,47 @@ void client::RecvMsg(int connection) {
         int len = recv(connection, recvbuf, sizeof(recvbuf), 0);
         if (len <= 0) break;
         cout << "收到服务器发来的消息： " << recvbuf << endl;
+    }
+}
+
+// 客户端处理与用户交互事务
+void client::HandleClient(int connection) {
+    int choice;
+    string name, password, password1;
+
+    cout << " ------------------ " << endl;
+    cout << "|                  |" << endl;
+    cout << "| 请输入您要的选项:|" << endl;
+    cout << "|    0:退出        |" << endl;
+    cout << "|    1:登录        |" << endl;
+    cout << "|    2:注册        |" << endl;
+    cout << "|                  |" << endl;
+    cout << " ------------------ " << endl;
+
+    while (1) {
+        cin >> choice;
+        if (choice == 0) {
+            break;
+        } else if (choice == 2) {
+            cout << "注册用户名：";
+            cin >> name;
+            while (1) {
+                cout << "密码：";
+                cin >> password;
+                cout << "确认密码：";
+                cin >> password1;
+                if (password1 == password) {
+                    break;
+                } else {
+                    cout << "密码不一致，请重新输入！" << endl;
+                }
+            }
+            name = "name:" + name;
+            password = "password:" + password;
+            string str = name + password;
+            send(connection, str.c_str(), str.size(), 0);
+            cout << "注册成功!" << endl;
+            cout << "继续输入您要的选项：" << endl;
+        }
     }
 }
