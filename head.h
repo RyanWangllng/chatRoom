@@ -14,6 +14,7 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <mysql/mysql.h>    // 数据库MySQL
 using namespace std;
 
 #endif
