@@ -62,6 +62,9 @@ void client::RecvMsg(int connection) {
 void client::HandleClient(int connection) {
     int choice;
     string name, password, password1;
+    
+    bool if_login = false;  // 记录是否登录成功
+    string login_name;      // 记录登录成功的用户名
 
     cout << " ------------------ " << endl;
     cout << "|                  |" << endl;
@@ -73,10 +76,13 @@ void client::HandleClient(int connection) {
     cout << " ------------------ " << endl;
 
     while (1) {
+        if (if_login) break;
+
         cin >> choice;
         if (choice == 0) {
             break;
-        } else if (choice == 2) {
+        } else if (choice == 2) { 
+            // 注册
             cout << "注册用户名：";
             cin >> name;
             while (1) {
@@ -93,9 +99,54 @@ void client::HandleClient(int connection) {
             name = "name:" + name;
             password = "password:" + password;
             string str = name + password;
+            
             send(connection, str.c_str(), str.size(), 0);
             cout << "注册成功!" << endl;
             cout << "继续输入您要的选项：" << endl;
+        } else if (choice == 1 && !if_login) {
+            // 登录
+            while (1) {
+                cout << "用户名：";
+                cin >> name;
+                cout << "密码：";
+                cin >> password;
+                string str = "login" + name;
+                str += "pass:";
+                str += password;
+
+                // 将登录信息发送给服务器
+                send(connection, str.c_str(), str.size(), 0);
+                char buffer[1000];
+                memset(buffer, 0, sizeof(buffer));
+                // 接受服务器响应
+                recv(connection, buffer, sizeof(buffer), 0);
+                string recv_str(buffer);
+                
+                if (recv_str.substr(0, 2) == "ok") {
+                    // 登录成功
+                    if_login = true;
+                    login_name = name;
+                    cout << "登陆成功！" << endl;
+                    break;
+                } else {
+                    // 登录失败
+                    cout << "用户名或密码错误！" << endl;
+                }
+            }
         }
+    }
+
+    if (if_login) {
+        // 清空终端
+        system("clear");
+        cout << "               欢迎回来," << login_name << endl;
+        cout << " -------------------------------------------" << endl;
+        cout << "|                                           |" << endl;
+        cout << "|          请选择你要的选项：               |" << endl;
+        cout << "|              0:退出                       |" << endl;
+        cout << "|              1:发起单独聊天               |" << endl;
+        cout << "|              2:发起群聊                   |" << endl;
+        cout << "|                                           |" << endl;
+        cout << " ------------------------------------------- " << endl;
     }
 }
