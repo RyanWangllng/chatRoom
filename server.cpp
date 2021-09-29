@@ -5,6 +5,8 @@
 vector<bool> server::sock_arr(10000, false);
 unordered_map<string, int> server::name_sock_map;
 pthread_mutex_t server::name_sock_mutex;
+unordered_map<int, set<int>> server::group_map;
+pthread_mutex_t server::group_mutex;
 
 // 构造函数
 server::server(int port, string ip) : server_port(port), server_ip(ip) {
@@ -72,14 +74,15 @@ void server::run() {
 // 子线程工作的静态函数
 // 前面加static会报错
 void server::RecvMsg(int connection) {
-    // 元组类型，四个成员分别是if_login, login_name, target_name, target_conn
+    // 元组类型，五个成员分别是if_login, login_name, target_name, target_conn, group_num
     /*
-        bool if_login;      //记录当前服务对象是否成功登录
-        string login_name;  //记录当前服务对象的名字
-        string target_name; //记录目标对象的名字
-        int target_conn;    //目标对象的套接字描述符
+        bool if_login;      // 记录当前服务对象是否成功登录
+        string login_name;  // 记录当前服务对象的名字
+        string target_name; // 记录目标对象的名字
+        int target_conn;    // 目标对象的套接字描述符
+        int group_num;      // 记录所处的群号
     */
-    tuple<bool, string, string, int> info;
+    tuple<bool, string, string, int, int> info;
     get<0>(info) = false;
     get<3>(info) = -1;
 
@@ -116,7 +119,7 @@ void server::RecvMsg(int connection) {
     }
 }
 
-void server::HandleRequest(int connection, string str, tuple<bool, string, string, int>& info) {
+void server::HandleRequest(int connection, string str, tuple<bool, string, string, int, int>& info) {
     char buffer[1000];
     string name, password;
     /*
@@ -127,6 +130,7 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
     string login_name = get<1>(info);   // 记录当前服务对象的用户名
     string target_name = get<2>(info);  // 记录目标对象的用户名
     int target_conn = get<3>(info);     // 记录目标对象的套接字描述符
+    int group_num = get<4>(info);       // 记录所处群号
 
     // 连接MySQL数据库
     MYSQL mysql_conn;
@@ -207,8 +211,9 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
 
         // 释放mysql_store_result()为结果集分配的内存
         mysql_free_result(result);
+        
     } else if (str.find("target:") != str.npos) {
-        // 绑定目标用户的文件描述符
+        // 绑定私聊目标用户的文件描述符
         int p1 = str.find("from:");
         string target = str.substr(7, p1 - 7);  // 目标用户名
         string from = str.substr(p1 + 5);       // 源用户名
@@ -223,7 +228,9 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
             target_conn = name_sock_map[target];
             cout << "目标用户的套接字描述符为 " << target_conn << endl;
         }
+
     } else if (str.find("content:") != str.npos) {
+        // 转发私聊信息
         if (target_conn == -1) {
             cout << "找不到目标用户 " << target_name << "，尝试重新寻找目标用户的套接字描述符！" << endl;
             if (name_sock_map.find(target_name) != name_sock_map.end()) {
@@ -238,6 +245,27 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
         cout << "用户 " << login_name << " 向 " << target_name << " 发送：" << send_str << endl;
         send_str = "[" + login_name + "]: " + send_str;
         send(target_conn, send_str.c_str(), send_str.size(), 0);
+
+    } else if (str.find("group:") != str.npos) {
+        string recv_str(str);
+        string num_str = recv_str.substr(6);
+        group_num = stoi(num_str);
+        cout << "用户 " << login_name << " 绑定群聊号为：" << num_str << endl;
+        pthread_mutex_lock(&group_mutex);           // 上锁
+        group_map[group_num].insert(connection);    // 将套接字描述符插入该群聊号对应的set中
+        pthread_mutex_unlock(&group_mutex);         // 解锁
+
+    } else if (str.find("gr_message:") != str.npos) {
+        // 广播群聊消息
+        string send_str(str);
+        send_str = send_str.substr(11);
+        send_str = "[" + login_name + "]: " + send_str;
+        cout << "群聊消息：" << send_str << endl;
+        for (auto i : group_map[group_num]) {
+            if (i != connection) {
+                send(i, send_str.c_str(), send_str.size(), 0);
+            }
+        }
     }
 
     // 更新实参
@@ -245,5 +273,5 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
     get<1>(info) = login_name;
     get<2>(info) = target_name;
     get<3>(info) = target_conn;
-
+    get<4>(info) = group_num;
 }

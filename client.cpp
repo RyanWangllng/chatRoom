@@ -37,6 +37,7 @@ void client::run() {
 }
 
 void client::SendMsg(int connection) {
+    // cout << "发送线程套接字：" << connection << endl;
     // char sendbuf[100];
     while (1) {
         // memset(sendbuf, 0, sizeof(sendbuf));
@@ -45,9 +46,16 @@ void client::SendMsg(int connection) {
         // if (strcmp(sendbuf, "exit") == 0 || ret <= 0) break;
         string str;
         cin >> str;
-        str = "content:" + str;
+        if (connection > 0) {
+            // 私聊
+            str = "content:" + str;
+        } else if (connection < 0) {
+            // 群聊
+            str = "gr_message:" + str;
+        }
+        
         // 发送数据
-        int ret = send(connection, str.c_str(), str.size(), 0);
+        int ret = send(abs(connection), str.c_str(), str.size(), 0);
         if (str == "content:exit" || ret <= 0) break;
     }
 }
@@ -176,6 +184,20 @@ void client::HandleClient(int connection) {
             thread send_t(client::SendMsg, connection), recv_t(client::RecvMsg, connection);
             send_t.join();
             recv_t.join();
+        } else if (choice == 2) {
+            // 群聊
+            cout << "请输入群号：" << endl;
+            int num;
+            cin >> num;
+
+            string sendStr("group:" + to_string(num));
+            send(connection, sendStr.c_str(), sendStr.size(), 0);
+            cout << "请输入你想说的话（输入exit退出）：" << endl;
+
+            // 创建发送和接收线程。发送线程套接字描述符是负数，与私聊区分开
+            thread send_t(client::SendMsg, -connection), recv_t(client::RecvMsg, connection);
+            send_t.join();
+            recv_t.join();
         }
-    } 
+    }
 }

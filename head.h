@@ -17,6 +17,8 @@
 #include <mysql/mysql.h>    // 数据库MySQL
 #include <unordered_map>
 #include <pthread.h>
+#include <set>
+#include <tuple>
 using namespace std;
 
 #endif
