@@ -3,9 +3,14 @@
 
 // 初始化，sock_arr[i] = false表示套接字描述符i未打开
 vector<bool> server::sock_arr(10000, false);
+unordered_map<string, int> server::name_sock_map;
+pthread_mutex_t server::name_sock_mutex;
 
 // 构造函数
-server::server(int port, string ip) : server_port(port), server_ip(ip) {}
+server::server(int port, string ip) : server_port(port), server_ip(ip) {
+    // 创建互斥锁
+    pthread_mutex_init(&name_sock_mutex, NULL);
+}
 
 // 析构函数
 server::~server() {
@@ -67,6 +72,17 @@ void server::run() {
 // 子线程工作的静态函数
 // 前面加static会报错
 void server::RecvMsg(int connection) {
+    // 元组类型，四个成员分别是if_login, login_name, target_name, target_conn
+    /*
+        bool if_login;      //记录当前服务对象是否成功登录
+        string login_name;  //记录当前服务对象的名字
+        string target_name; //记录目标对象的名字
+        int target_conn;    //目标对象的套接字描述符
+    */
+    tuple<bool, string, string, int> info;
+    get<0>(info) = false;
+    get<3>(info) = -1;
+
     // 接收缓冲区
     char buffer[1000];
     // 不断接收数据
@@ -74,7 +90,7 @@ void server::RecvMsg(int connection) {
         memset(buffer, 0, sizeof(buffer));
         int len = recv(connection, buffer, sizeof(buffer), 0);
         // 客户端发送exit或异常结束时，退出
-        if (strcmp(buffer, "exit") == 0 || len <= 0) {
+        if (strcmp(buffer, "content:exit") == 0 || len <= 0) {
             // 关闭套接字描述符
             close(connection);
             sock_arr[connection] = false;
@@ -84,7 +100,7 @@ void server::RecvMsg(int connection) {
         
         // 处理客户端请求
         string str(buffer);
-        HandleRequest(connection, str);
+        HandleRequest(connection, str, info);
 
         /*
         // 回复客户端
@@ -100,12 +116,17 @@ void server::RecvMsg(int connection) {
     }
 }
 
-void server::HandleRequest(int connection, string str) {
+void server::HandleRequest(int connection, string str, tuple<bool, string, string, int>& info) {
     char buffer[1000];
     string name, password;
-
+    /*
     bool if_login = false;  // 记录当前客户端对象是否登录成功
     string login_name;      // 记录当前客户端对象的用户名
+    */
+    bool if_login = get<0>(info);       // 记录当前服务对象是否成功登录
+    string login_name = get<1>(info);   // 记录当前服务对象的用户名
+    string target_name = get<2>(info);  // 记录目标对象的用户名
+    int target_conn = get<3>(info);     // 记录目标对象的套接字描述符
 
     // 连接MySQL数据库
     MYSQL mysql_conn;
@@ -141,6 +162,7 @@ void server::HandleRequest(int connection, string str) {
         //     cout << "插入失败！" << ret << endl;
         // }
     } else if (str.find("login") != str.npos) {
+        // 登录
         int p_login = str.find("login"), p_pass = str.find("pass:");
         name = str.substr(p_login + 5, p_pass - 5);
         password = str.substr(p_pass + 5, str.size() - p_pass - 4);
@@ -166,6 +188,11 @@ void server::HandleRequest(int connection, string str) {
                 string str_ret = "ok";
                 if_login = true;
                 login_name = name;
+
+                pthread_mutex_lock(&name_sock_mutex);   // 上锁
+                name_sock_map[login_name] = connection; // 记录用户名和文件描述符的对应关系
+                pthread_mutex_unlock(&name_sock_mutex); // 解锁
+
                 send(connection, str_ret.c_str(), str_ret.size(), 0);
             } else {
                 cout << "登录密码错误！" << endl;
@@ -180,5 +207,43 @@ void server::HandleRequest(int connection, string str) {
 
         // 释放mysql_store_result()为结果集分配的内存
         mysql_free_result(result);
+    } else if (str.find("target:") != str.npos) {
+        // 绑定目标用户的文件描述符
+        int p1 = str.find("from:");
+        string target = str.substr(7, p1 - 7);  // 目标用户名
+        string from = str.substr(p1 + 5);       // 源用户名
+        target_name = target;
+
+        if (name_sock_map.find(target) == name_sock_map.end()) {
+            // 找不到目标用户
+            cout << "源用户为 " << login_name << "，向目标用户 " << target_name << " 仍未登录，无法发起私聊！" << endl;
+        } else {
+            // 找到了目标用户
+            cout << "源用户 " << login_name << " 向目标用户 " << target_name << " 发起的私聊即将建立！" << endl;
+            target_conn = name_sock_map[target];
+            cout << "目标用户的套接字描述符为 " << target_conn << endl;
+        }
+    } else if (str.find("content:") != str.npos) {
+        if (target_conn == -1) {
+            cout << "找不到目标用户 " << target_name << "，尝试重新寻找目标用户的套接字描述符！" << endl;
+            if (name_sock_map.find(target_name) != name_sock_map.end()) {
+                target_conn = name_sock_map[target_name];
+                cout << "重新寻找目标用户套接字描述符成功！" << endl;
+            } else {
+                cout << "重新寻找失败，转发失败！" << endl;
+            }
+        }
+        string recv_str(str);
+        string send_str = recv_str.substr(8);
+        cout << "用户 " << login_name << " 向 " << target_name << " 发送：" << send_str << endl;
+        send_str = "[" + login_name + "]: " + send_str;
+        send(target_conn, send_str.c_str(), send_str.size(), 0);
     }
+
+    // 更新实参
+    get<0>(info) = if_login;
+    get<1>(info) = login_name;
+    get<2>(info) = target_name;
+    get<3>(info) = target_conn;
+
 }

@@ -32,17 +32,23 @@ void client::run() {
     recv_t.join();
     cout << "接收线程已关闭！" << endl;
     */
+    close(sock_connection);
     return;
 }
 
 void client::SendMsg(int connection) {
-    char sendbuf[100];
+    // char sendbuf[100];
     while (1) {
-        memset(sendbuf, 0, sizeof(sendbuf));
-        cin >> sendbuf;
+        // memset(sendbuf, 0, sizeof(sendbuf));
+        // cin >> sendbuf;
+        // int ret = send(connection, sendbuf, strlen(sendbuf), 0);
+        // if (strcmp(sendbuf, "exit") == 0 || ret <= 0) break;
+        string str;
+        cin >> str;
+        str = "content:" + str;
         // 发送数据
-        int ret = send(connection, sendbuf, strlen(sendbuf), 0);
-        if (strcmp(sendbuf, "exit") == 0 || ret <= 0) break;
+        int ret = send(connection, str.c_str(), str.size(), 0);
+        if (str == "content:exit" || ret <= 0) break;
     }
 }
 
@@ -54,7 +60,8 @@ void client::RecvMsg(int connection) {
         memset(recvbuf, 0, sizeof(recvbuf));
         int len = recv(connection, recvbuf, sizeof(recvbuf), 0);
         if (len <= 0) break;
-        cout << "收到服务器发来的消息： " << recvbuf << endl;
+        cout << recvbuf << endl;
+        // cout << "收到服务器发来的消息： " << recvbuf << endl;
     }
 }
 
@@ -136,7 +143,9 @@ void client::HandleClient(int connection) {
         }
     }
 
-    if (if_login) {
+    // 登录成功
+    while (if_login && 1) {
+        if (if_login) {
         // 清空终端
         system("clear");
         cout << "               欢迎回来," << login_name << endl;
@@ -148,5 +157,25 @@ void client::HandleClient(int connection) {
         cout << "|              2:发起群聊                   |" << endl;
         cout << "|                                           |" << endl;
         cout << " ------------------------------------------- " << endl;
-    }
+        }
+
+        cin >> choice;
+        if (choice == 0) {
+            break;
+        } else if (choice == 1) {
+            // 私聊
+            cout << "请输入对方的用户名：";
+            string target_name, content;
+            cin >> target_name;
+
+            string sendStr("target:" + target_name + "from:" + login_name);     // 标识目标用户和源用户
+            send(connection, sendStr.c_str(), sendStr.size(), 0);               // 向服务器发送目标用户和源用户
+            cout << "请输入你想说的话（输入exit退出）：" << endl;
+
+            // 创建发送和接收线程
+            thread send_t(client::SendMsg, connection), recv_t(client::RecvMsg, connection);
+            send_t.join();
+            recv_t.join();
+        }
+    } 
 }
