@@ -14,11 +14,13 @@
 #include <iostream>
 #include <thread>
 #include <vector>
-#include <mysql/mysql.h>    // 数据库MySQL
+#include <mysql/mysql.h>    // MySQL数据库
 #include <unordered_map>
 #include <pthread.h>
 #include <set>
 #include <tuple>
+#include <hiredis/hiredis.h> // Redis数据库
+#include <fstream>
 using namespace std;
 
 #endif

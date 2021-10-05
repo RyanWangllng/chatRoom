@@ -144,7 +144,34 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
     //     cout << "数据库连接成功！" << endl;
     // }
 
-    if (str.find("name:") != str.npos) {
+    // 连接Redis数据库
+    redisContext *redis_target = redisConnect("127.0.0.1", 6379);
+    if (redis_target->err) {
+        redisFree(redis_target);
+        cout << "连接失败！" << endl;
+    } else {
+        cout << "Redis连接成功！" << endl;
+    }
+
+    // 先接收cookie看看Redis是否保存该用户的登陆状态
+    if (str.find("cookie:") != str.npos) {
+        string cookie = str.substr(7);
+        // 查询该cookie是否存在：hget cookie name
+        string redis_str = "hget " + cookie + " name";
+        redisReply *r = (redisReply*)redisCommand(redis_target, redis_str.c_str());
+        string send_res;
+        if (r->str) {
+            // cookie存在
+            cout << "查询Redis结果：" << r->str << endl;
+            send_res = r->str;
+        } else {
+            // cookie不存在
+            cout << "cookie not exist！" << endl;
+            send_res = "NULL";
+        }
+        send(connection, send_res.c_str(), send_res.size(), 0);
+
+    } else if (str.find("name:") != str.npos) {
         // 注册
         int p_name = str.find("name:"), p_pass = str.find("password:");
         name = str.substr(p_name + 5, p_pass - 5);
@@ -197,13 +224,36 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
                 name_sock_map[login_name] = connection; // 记录用户名和文件描述符的对应关系
                 pthread_mutex_unlock(&name_sock_mutex); // 解锁
 
+                // 随机生成sessionid并发送到客户端
+                // sessionid大小为10位，每位由数字（0-9）或大写字母或小写字母随机组成
+                srand(time(NULL)); // 初始化随机种子
+                for (int i = 0; i < 10; i++) {
+                    int type = rand() % 3; // type为0代表数字，1代表小写字母，2代表大写字母
+                    if (type == 0) {
+                        str_ret += '0' + rand() % 9;
+                    } else if (type == 1) {
+                        str_ret += 'a' + rand() % 26;
+                    } else if (type == 2) {
+                        str_ret += 'A' + rand() % 26;
+                    }
+                }
+                // 将sessionid存入Redis中
+                string redis_str = "hset " + str_ret.substr(2) + " name " + login_name;
+                redisReply *r = (redisReply*)redisCommand(redis_target, redis_str.c_str());
+                // 设置生存时间，默认300秒
+                redis_str = "expire " + str_ret.substr(2) + " 300";
+                r = (redisReply*)redisCommand(redis_target, redis_str.c_str());
+                cout << "随机生成的sessionid为：" << str_ret.substr(2) << endl;
+
                 send(connection, str_ret.c_str(), str_ret.size(), 0);
             } else {
+                // 密码错误
                 cout << "登录密码错误！" << endl;
                 char str_ret[100] = "wrong";
                 send(connection, str_ret, strlen(str_ret), 0);
             }
         } else {
+            // 没找到用户名
             cout << "查询失败！" << endl;
             char str_ret[100] = "wrong";
             send(connection, str_ret, strlen(str_ret), 0);

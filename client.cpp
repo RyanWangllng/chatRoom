@@ -81,6 +81,29 @@ void client::HandleClient(int connection) {
     bool if_login = false;  // 记录是否登录成功
     string login_name;      // 记录登录成功的用户名
 
+    // 发送本地cookie，并接收服务器答复，若答复通过就不登录
+    // 先检查是否存在cookie文件
+    ifstream f("cookie.txt");
+    string cookie_str;
+    if (f.good()) {
+        f >> cookie_str;
+        f.close();
+        cookie_str = "cookie:" + cookie_str;
+        // 将cookie发送到服务端
+        send(connection, cookie_str.c_str(), cookie_str.size(), 0);
+        // 接受服务器答复
+        char cookie_ret[100];
+        memset(cookie_ret, 0, sizeof(cookie_ret));
+        recv(connection, cookie_ret, sizeof(cookie_ret), 0);
+        // 判断服务器答复是否通过
+        string ret_str(cookie_ret);
+        if (ret_str != "NULL") {
+            // Redis查询到了cookie，通过
+            if_login = true;
+            login_name = ret_str;
+        }
+    }
+
     cout << " ------------------ " << endl;
     cout << "|                  |" << endl;
     cout << "| 请输入您要的选项:|" << endl;
@@ -96,6 +119,7 @@ void client::HandleClient(int connection) {
         cin >> choice;
         if (choice == 0) {
             break;
+
         } else if (choice == 2) { 
             // 注册
             cout << "注册用户名：";
@@ -118,6 +142,7 @@ void client::HandleClient(int connection) {
             send(connection, str.c_str(), str.size(), 0);
             cout << "注册成功!" << endl;
             cout << "继续输入您要的选项：" << endl;
+
         } else if (choice == 1 && !if_login) {
             // 登录
             while (1) {
@@ -141,6 +166,12 @@ void client::HandleClient(int connection) {
                     // 登录成功
                     if_login = true;
                     login_name = name;
+
+                    // 本地建立cookie文件保存sessionid
+                    string tmpstr = recv_str.substr(2);
+                    tmpstr = "cat > cookie.txt << end \n" + tmpstr + "\nend";
+                    system(tmpstr.c_str());
+                    
                     cout << "登陆成功！" << endl;
                     break;
                 } else {
