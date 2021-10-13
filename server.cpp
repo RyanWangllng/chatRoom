@@ -1,5 +1,6 @@
 // #include "head.h"
 #include "server.h"
+#include "threadPool.hpp"
 
 // 初始化，sock_arr[i] = false表示套接字描述符i未打开
 vector<bool> server::sock_arr(10000, false);
@@ -7,18 +8,19 @@ unordered_map<string, int> server::name_sock_map;
 pthread_mutex_t server::name_sock_mutex;
 unordered_map<int, set<int>> server::group_map;
 pthread_mutex_t server::group_mutex;
+unordered_map<string, string> server::from_to_map;
+pthread_mutex_t server::from_mutex;
 
 // 构造函数
 server::server(int port, string ip) : server_port(port), server_ip(ip) {
     // 创建互斥锁
     pthread_mutex_init(&name_sock_mutex, NULL);
+    pthread_mutex_init(&group_mutex, NULL);
+    pthread_mutex_init(&from_mutex, NULL);
 }
 
 // 析构函数
 server::~server() {
-    // for (auto connection : sock_arr) {
-    //     close(connection);
-    // }
     // 调整析构函数
     for (int i = 0; i < sock_arr.size(); i++) {
         if (sock_arr[i]) {
@@ -30,50 +32,105 @@ server::~server() {
 
 // 服务器运行
 void server::run() {
-    // 服务器套接字
-    server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    // 未连接的和已连接的和的最大值
+    int LISTEN_BACKLOG = 128;
+    ssize_t n;
 
-    // 服务器的socket地址结构体
-    struct sockaddr_in server_sockaddr;
-    server_sockaddr.sin_family = AF_INET;                       // TCP/IPv4协议族
-    server_sockaddr.sin_port = htons(server_port);                     // 转换端口：主机字节序 -> 网络字节序
-    server_sockaddr.sin_addr.s_addr = inet_addr(server_ip.c_str());   // ip地址，环回地址，相当于本机ip
+    // 声明epoll_event结构体的变量，event用于注册事件，数组用于回传要处理的事件
+    struct epoll_event event, events[10000];
+    
+    // 生成用于处理accept的epoll专用的文件描述符
+    int epfd = epoll_create(10000);
 
-    // bind将套接字描述符和本地ip地址及端口号绑定
-    if (bind(server_sockfd, (struct sockaddr*)&server_sockaddr, sizeof(server_sockaddr)) == -1) {
+    // 服务器和客户端的socket地址结构体
+    struct sockaddr_in clientaddr;
+    struct sockaddr_in serveraddr;
+
+    // 监听文件描述符
+    int listenfd = socket(PF_INET, SOCK_STREAM, 0);
+
+    // 设置为非阻塞
+    setnonblocking(listenfd);
+
+    // 设置与要处理的事件相关的文件描述符
+    event.data.fd = listenfd;
+
+    // 设置要处理的事件类型
+    event.events = EPOLLIN | EPOLLET;
+
+    // 注册epoll事件
+    epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &event);
+
+    // 设置serveraddr
+    bzero(&serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;                        // TCP/IPv4协议族
+    serveraddr.sin_port = htons(8023);                      // 转换端口：主机字节序 -> 网络字节序
+    serveraddr.sin_addr.s_addr = inet_addr("127.0.0.1");    // ip地址，环回地址，相当于本机ip
+
+    // 绑定
+    if (bind(listenfd, (struct sockaddr*)&serveraddr, sizeof(serveraddr)) == -1) {
         perror("bind error");
         exit(1);
     }
 
-    // 监听一个套接字上的连接
-    if (listen(server_sockfd, 20) == -1) {
+    // 监听
+    if (listen(listenfd, LISTEN_BACKLOG) == -1) {
         perror("listen error");
         exit(1);
     }
 
-    // 定义客户端socket地址结构体
-    struct sockaddr_in client_addr;
-    socklen_t length = sizeof(client_addr);
+    socklen_t clilen = sizeof(clientaddr);
+
+    // 定义一个最小3线程，最大10线程的线程池
+    ThreadPool<int> pool(3, 10);
 
     // 不断与客户端创建新的连接，并创建子线程为其服务
     while (1) {
-        int connection = accept(server_sockfd, (struct sockaddr*)&client_addr, &length);
-        if (connection < 0) {
-            perror("connect error");
-            exit(1);
+        cout << "------------------------" << endl;
+        cout << "epoll_wait 阻塞中..." << endl;
+
+        // 等待epoll事件的发生
+        // 最后一个参数时timeout，0：立即返回；-1：一直阻塞直到有时间；x：等待x毫秒
+        int ndfs = epoll_wait(epfd, events, 1000, -1);
+        cout << "epoll_wait返回，有事件发生！" << endl;
+
+        // 处理所发生的的事件
+        for (int i = 0; i < ndfs; ++i) {
+            if (events[i].data.fd == listenfd) {
+                // 有新客户端连接服务器
+                int connfd = accept(listenfd, (struct sockaddr*)&clientaddr, &clilen);
+                if (connfd < 0) {
+                    perror("connfd < 0");
+                    exit(1);
+                } else {
+                    cout << "用户：" << inet_ntoa(clientaddr.sin_addr) << "正在连接..." <<  endl;
+                }
+                // 设置用于读操作的文件描述符
+                event.data.fd = connfd;
+                // 设置用于注册的读操作事件，采用ET边缘触发，为防止多个线程处理同一个socket而使用EPOLLONESHOT
+                event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+                // 边缘触发要将套接字设置为非阻塞
+                setnonblocking(connfd);
+                // 注册event
+                epoll_ctl(epfd, EPOLL_CTL_ADD, connfd, &event);
+            
+            } else if (events[i].events & EPOLLIN) {
+                // 接收到读事件
+                int sockfd = events[i].data.fd;
+                events[i].data.fd = -1;
+                cout << "接受到读事件！" << endl;
+                string recv_str;
+                // 加入任务队列，处理事件
+                pool.addTask(Task<int>(RecvMsg, epfd, sockfd));
+            }
         }
-        cout << "套接字描述符为 " << connection << " 的客户端成功连接！" << endl;
-        sock_arr.push_back(connection);
-        // 创建子线程
-        thread t(server::RecvMsg, connection);
-        // 设置线程分离状态，用join会导致主线程阻塞
-        t.detach();
     }
+    close(listenfd);
 }
 
 // 子线程工作的静态函数
 // 前面加static会报错
-void server::RecvMsg(int connection) {
+void server::RecvMsg(int epollfd, int connection) {
     // 元组类型，五个成员分别是if_login, login_name, target_name, target_conn, group_num
     /*
         bool if_login;      // 记录当前服务对象是否成功登录
@@ -86,40 +143,54 @@ void server::RecvMsg(int connection) {
     get<0>(info) = false;
     get<3>(info) = -1;
 
-    // 接收缓冲区
-    char buffer[1000];
+    string recv_str;
     // 不断接收数据
     while (1) {
+        // 接收缓冲区
+        char buffer[100];        
         memset(buffer, 0, sizeof(buffer));
         int len = recv(connection, buffer, sizeof(buffer), 0);
-        // 客户端发送exit或异常结束时，退出
-        if (strcmp(buffer, "content:exit") == 0 || len <= 0) {
-            // 关闭套接字描述符
-            close(connection);
-            sock_arr[connection] = false;
-            break;
-        }
-        cout << "收到套接字描述符为 " << connection << " 的客户端发来的信息： " << buffer << endl;
-        
-        // 处理客户端请求
-        string str(buffer);
-        HandleRequest(connection, str, info);
+        if (len < 0) {
+            cout << "recv返回值小于0!" << endl;
+            // 对于非阻塞IO，下面的事件成立表示数据已经全部读取完毕
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                cout << "数据读取完毕！" << endl;
+                cout << "接收到的完整内容为：" << recv_str << endl;
+                cout << "开始处理事件！" << endl;
+                break;
+            }
+            cout << "errno: " << errno << endl;
+            return;
 
-        /*
-        // 回复客户端
-        string ans = "copy！";
-        int ret = send(connection, ans.c_str(), ans.size(), 0);
-        // 服务器收到exit或异常关闭套接字描述符
-        if (ret <= 0) {
-            close(connection);
-            sock_arr[connection] = false;
-            break;
+        } else if (len == 0) {
+            cout << "recv返回值为0！" << endl;
+            return;
+
+        } else {
+            cout << "接收到的内容为：" << buffer << endl;
+            string tmp(buffer);
+            recv_str += tmp;
         }
-        */
+    }
+    HandleRequest(epollfd, connection, recv_str, info);
+}
+
+// 将参数的文件描述符设为非阻塞
+void server::setnonblocking(int sock) {
+    int opts;
+    opts = fcntl(sock, F_GETFL);
+    if (opts < 0) {
+        perror("fcntl(sock, F_GETFL)");
+        exit(1);
+    }
+    opts = opts | O_NONBLOCK;
+    if (fcntl(sock, F_SETFL, opts) < 0) {
+        perror("fcntl(sock, F_SETFL, opts)");
+        exit(1);
     }
 }
 
-void server::HandleRequest(int connection, string str, tuple<bool, string, string, int, int>& info) {
+void server::HandleRequest(int epollfd, int connection, string str, tuple<bool, string, string, int, int>& info) {
     char buffer[1000];
     string name, password;
     /*
@@ -138,11 +209,6 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
     // MYSQL *mysql_conn = mysql_init(NULL);
     // 连接本地数据库，第二个参数使用"127.0.0.1"会连接失败，使用"localhost"连接成功
     mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS);
-    // if (!mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS)) {
-    //     cout << "数据库连接失败！" << endl;
-    // } else {
-    //     cout << "数据库连接成功！" << endl;
-    // }
 
     // 连接Redis数据库
     redisContext *redis_target = redisConnect("127.0.0.1", 6379);
@@ -186,12 +252,7 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
         
         // 执行SQL语句
         mysql_query(&mysql_conn, search.c_str());
-        // int ret = mysql_query(&mysql_conn, search.c_str());
-        // if (ret == 0) {
-        //     cout << "插入成功！" << endl;
-        // } else {
-        //     cout << "插入失败！" << ret << endl;
-        // }
+
     } else if (str.find("login") != str.npos) {
         // 登录
         int p_login = str.find("login"), p_pass = str.find("pass:");
@@ -264,6 +325,7 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
         
     } else if (str.find("target:") != str.npos) {
         // 绑定私聊目标用户的文件描述符
+        cout << "绑定私聊目标用户！" << endl;
         int p1 = str.find("from:");
         string target = str.substr(7, p1 - 7);  // 目标用户名
         string from = str.substr(p1 + 5);       // 源用户名
@@ -274,12 +336,27 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
             cout << "源用户为 " << login_name << "，向目标用户 " << target_name << " 仍未登录，无法发起私聊！" << endl;
         } else {
             // 找到了目标用户
+            pthread_mutex_lock(&from_mutex);
+            from_to_map[from] = target;
+            cout << "from: " << from << " target: " << target << endl;
+            pthread_mutex_unlock(&from_mutex);
             cout << "源用户 " << login_name << " 向目标用户 " << target_name << " 发起的私聊即将建立！" << endl;
             target_conn = name_sock_map[target];
             cout << "目标用户的套接字描述符为 " << target_conn << endl;
         }
 
     } else if (str.find("content:") != str.npos) {
+        cout << "转发私聊信息" << endl;
+        target_conn = -1;
+        // 找出目标用户和源用户
+        for (auto i : name_sock_map) {
+            if (i.second == connection) {
+                login_name = i.first;
+                target_name = from_to_map[login_name];
+                target_conn = name_sock_map[target_name];
+                break;
+            }
+        }
         // 转发私聊信息
         if (target_conn == -1) {
             cout << "找不到目标用户 " << target_name << "，尝试重新寻找目标用户的套接字描述符！" << endl;
@@ -297,9 +374,16 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
         send(target_conn, send_str.c_str(), send_str.size(), 0);
 
     } else if (str.find("group:") != str.npos) {
+        cout << "绑定群聊号！" << endl;
         string recv_str(str);
         string num_str = recv_str.substr(6);
         group_num = stoi(num_str);
+        for (auto i : name_sock_map) {
+            if (i.second == connection) {
+                login_name = i.first;
+                break;
+            }
+        }
         cout << "用户 " << login_name << " 绑定群聊号为：" << num_str << endl;
         pthread_mutex_lock(&group_mutex);           // 上锁
         group_map[group_num].insert(connection);    // 将套接字描述符插入该群聊号对应的set中
@@ -307,6 +391,19 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
 
     } else if (str.find("gr_message:") != str.npos) {
         // 广播群聊消息
+        cout << "广播群聊消息！" << endl;
+        for (auto i : name_sock_map) {
+            if (i.second == connection) {
+                login_name = i.first;
+                break;
+            }
+        }
+        for (auto i : group_map) {
+            if (i.second.find(connection) != i.second.end()) {
+                group_num = i.first;
+                break;
+            }
+        }
         string send_str(str);
         send_str = send_str.substr(11);
         send_str = "[" + login_name + "]: " + send_str;
@@ -316,6 +413,17 @@ void server::HandleRequest(int connection, string str, tuple<bool, string, strin
                 send(i, send_str.c_str(), send_str.size(), 0);
             }
         }
+    }
+
+    // 线程工作完毕后重新注册事件
+    epoll_event event;
+    event.data.fd = connection;
+    event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, connection, &event);
+
+    mysql_close(&mysql_conn);
+    if (!redis_target->err) {
+        redisFree(redis_target);
     }
 
     // 更新实参
