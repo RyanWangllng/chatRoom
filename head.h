@@ -21,6 +21,9 @@
 #include <tuple>
 #include <hiredis/hiredis.h> // Redis数据库
 #include <fstream>
+#include <sys/epoll.h>
+#include <errno.h>
+
 using namespace std;
 
 #endif
