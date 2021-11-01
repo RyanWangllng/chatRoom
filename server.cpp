@@ -208,7 +208,7 @@ void server::HandleRequest(int epollfd, int connection, string str, tuple<bool, 
     mysql_init(&mysql_conn);
     // MYSQL *mysql_conn = mysql_init(NULL);
     // 连接本地数据库，第二个参数使用"127.0.0.1"会连接失败，使用"localhost"连接成功
-    mysql_real_connect(&mysql_conn, "localhost", "root", "", "CharProject", 0, NULL, CLIENT_MULTI_STATEMENTS);
+    mysql_real_connect(&mysql_conn, "127.0.0.1", "root", "123456", "ChatProject", 0, NULL, CLIENT_MULTI_STATEMENTS);
 
     // 连接Redis数据库
     redisContext *redis_target = redisConnect("127.0.0.1", 6379);
