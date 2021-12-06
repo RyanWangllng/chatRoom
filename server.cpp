@@ -28,6 +28,9 @@ server::~server() {
         }
     }
     close(server_sockfd);
+    pthread_mutex_destroy(&name_sock_mutex);
+    pthread_mutex_destroy(&group_mutex);
+    pthread_mutex_destroy(&from_mutex);
 }
 
 // 服务器运行
