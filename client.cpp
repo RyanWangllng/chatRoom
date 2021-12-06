@@ -56,7 +56,10 @@ void client::SendMsg(int connection) {
         
         // 发送数据
         int ret = send(abs(connection), str.c_str(), str.size(), 0);
-        if (str == "content:exit" || ret <= 0) break;
+        if (str == "content:exit" || str == "gr_message:exit" || ret <= 0) {
+            cout << "发送线程准备结束" << endl;
+            break;
+        }
     }
 }
 
@@ -67,7 +70,13 @@ void client::RecvMsg(int connection) {
     while (1) {
         memset(recvbuf, 0, sizeof(recvbuf));
         int len = recv(connection, recvbuf, sizeof(recvbuf), 0);
-        if (len <= 0) break;
+        string recv_str = static_cast<string>(recvbuf);
+        recv_str = recv_str.substr(len - 4);
+        // cout << "接受线程收到了啥： " << recv_str << endl;
+        if (len <= 0 || recv_str == "exit") {
+            cout << "接受线程准备结束" << endl;
+            break;
+        }
         cout << recvbuf << endl;
         // cout << "收到服务器发来的消息： " << recvbuf << endl;
     }
